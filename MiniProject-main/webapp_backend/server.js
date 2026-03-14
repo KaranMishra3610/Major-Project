@@ -446,6 +446,411 @@ app.get('/dashboard/inventory', authenticateToken, async (req, res) => {
   }
 });
 
+// ==================== AI/ML RECOMMENDATION ENDPOINTS ====================
+
+// Get AI-powered product recommendations
+app.get('/ai/recommendations', authenticateToken, async (req, res) => {
+  const username = req.user.username;
+  console.log('Generating AI recommendations for:', username);
+
+  try {
+    const productCollection = db.collection(productCollectionName);
+    
+    // Get user's purchase history
+    const userPurchases = await productCollection.find({ 
+      ProductOwner: username 
+    }).toArray();
+    
+    // Get all products
+    const allProducts = await productCollection.find({}).toArray();
+    
+    // Get all users and their purchases for collaborative filtering
+    const allUserPurchases = {};
+    allProducts.forEach(product => {
+      const owner = product.ProductOwner;
+      if (owner && owner !== 'supermarket') {
+        if (!allUserPurchases[owner]) {
+          allUserPurchases[owner] = [];
+        }
+        allUserPurchases[owner].push({
+          uid: product.UID,
+          category: product.catNumber,
+          price: parseFloat(product.ProductPrice) || 0
+        });
+      }
+    });
+    
+    // Enhanced AI with product relationships and smart logic
+    const recommendations = generateSmartRecommendations(
+      username,
+      userPurchases,
+      allProducts,
+      allUserPurchases
+    );
+    
+    // Get top 5 recommendations
+    const topRecommendations = recommendations
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+    
+    console.log(`✅ Generated ${topRecommendations.length} AI recommendations`);
+    
+    res.json({
+      success: true,
+      recommendations: topRecommendations,
+      algorithms_used: ['Smart Product Relations', 'Collaborative Filtering', 'Category Intelligence'],
+      total_analyzed: allProducts.length
+    });
+  } catch (error) {
+    console.error('Error generating recommendations:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+  // Enhanced Smart Recommendation Engine
+function generateSmartRecommendations(currentUser, userPurchases, allProducts, allUserPurchases) {
+  const recommendations = [];
+  const userPurchasedUIDs = userPurchases.map(p => p.UID);
+  
+  // Product relationship rules (what goes well together)
+  const productRelations = {
+    'ice_cream': {
+      relatedCategories: ['ice_cream', 'beverages', 'dairy', 'biscuits', 'dessert'],
+      reason: 'Perfect dessert pairing',
+      scoreBoost: 2.5
+    },
+    'toothpaste': {
+      relatedCategories: ['soap', 'toothpaste', 'personal_care', 'hygiene'],
+      reason: 'Complete your personal care routine',
+      scoreBoost: 2.0
+    },
+    'oil_pastel': {
+      relatedCategories: ['oil_pastel', 'art_supplies', 'stationery', 'colors', 'pastel'],
+      reason: 'Expand your art collection',
+      scoreBoost: 3.0
+    },
+    'soap': {
+      relatedCategories: ['toothpaste', 'soap', 'personal_care', 'hygiene'],
+      reason: 'Complete hygiene essentials',
+      scoreBoost: 2.0
+    },
+    'dairy': {
+      relatedCategories: ['ice_cream', 'dairy', 'beverages', 'dessert'],
+      reason: 'Fresh dairy products you might enjoy',
+      scoreBoost: 2.0
+    },
+    'beverages': {
+      relatedCategories: ['ice_cream', 'biscuits', 'instant_food', 'dessert'],
+      reason: 'Enjoy with your favorite snacks',
+      scoreBoost: 1.8
+    },
+    'dessert': {
+      relatedCategories: ['ice_cream', 'biscuits', 'dairy', 'dessert'],
+      reason: 'Sweet treats you will love',
+      scoreBoost: 2.5
+    }
+  };
+  
+  // Available products (owned by supermarket)
+  const availableProducts = allProducts.filter(
+    p => p.ProductOwner === 'supermarket' && !userPurchasedUIDs.includes(p.UID)
+  );
+  
+  if (userPurchases.length === 0) {
+    // New user - show diverse popular items
+    availableProducts.forEach(product => {
+      const category = product.catNumber || 'general';
+      const price = parseFloat(product.ProductPrice) || 0;
+      
+      recommendations.push({
+        ...product,
+        score: price < 100 ? 1.2 : 0.8,
+        aiReasons: ['Popular choice for new shoppers', 'Great starter product'],
+        confidence: price < 100 ? 'Medium' : 'Low',
+        aiScore: (price < 100 ? 1.2 : 0.8).toFixed(2)
+      });
+    });
+    return recommendations;
+  }
+  
+  // Analyze user's purchased categories
+  const userCategories = {};
+  userPurchases.forEach(purchase => {
+    const cat = purchase.catNumber || 'general';
+    userCategories[cat] = (userCategories[cat] || 0) + 1;
+  });
+  
+  // Get ALL user categories (not just favorite)
+  const userCategoryList = Object.keys(userCategories);
+  
+  // Calculate user's average price
+  const avgPrice = userPurchases.reduce((sum, p) => 
+    sum + (parseFloat(p.ProductPrice) || 0), 0
+  ) / userPurchases.length;
+  
+  // Generate smart recommendations for each available product
+  availableProducts.forEach(product => {
+    let score = 0;
+    let reasons = [];
+    const productCategory = product.catNumber || 'general';
+    const productPrice = parseFloat(product.ProductPrice) || 0;
+    const productName = product.ProductName.toLowerCase();
+    
+    // 1. EXACT CATEGORY MATCH (Highest priority - same category)
+    if (userCategoryList.includes(productCategory)) {
+      score += 3.0; // Very high score for exact category match
+      const categoryDisplay = productCategory.replace('_', ' ');
+      reasons.push(`You recently purchased ${categoryDisplay} products`);
+    }
+    
+    // 2. SMART RELATION MATCHING (Check against ALL user categories)
+    userCategoryList.forEach(userCat => {
+      if (productRelations[userCat]) {
+        const relations = productRelations[userCat];
+        if (relations.relatedCategories.includes(productCategory)) {
+          score += relations.scoreBoost;
+          reasons.push(relations.reason);
+        }
+        
+        // BONUS: Check product name for keywords
+        relations.relatedCategories.forEach(keyword => {
+          if (productName.includes(keyword.replace('_', ' '))) {
+            score += 1.0;
+          }
+        });
+      }
+    });
+    
+    // 3. COLLECTION BONUS (Multiple purchases from same category)
+    userCategoryList.forEach(userCat => {
+      if (userCategories[userCat] >= 2 && productCategory === userCat) {
+        score += 2.0;
+        reasons.push('Build your collection');
+      } else if (userCategories[userCat] >= 1 && productCategory === userCat) {
+        score += 1.5;
+        reasons.push('Continue exploring this category');
+      }
+    });
+    
+    // 4. COLLABORATIVE FILTERING
+    Object.keys(allUserPurchases).forEach(otherUser => {
+      if (otherUser === currentUser) return;
+      
+      const otherUserItems = allUserPurchases[otherUser];
+      const otherUserUIDs = otherUserItems.map(item => item.uid);
+      const otherUserCategories = otherUserItems.map(item => item.category);
+      
+      // Check if other user bought same category as current user
+      const hasCommonCategory = userCategoryList.some(userCat => 
+        otherUserCategories.includes(userCat)
+      );
+      
+      // If they bought similar categories and also bought this product
+      if (hasCommonCategory && otherUserUIDs.includes(product.UID)) {
+        score += 2.0;
+        if (!reasons.includes('Customers with similar taste bought this')) {
+          reasons.push('Customers with similar taste bought this');
+        }
+      }
+    });
+    
+    // 5. PRICE MATCHING (Bonus for similar price)
+    const priceDiff = Math.abs(productPrice - avgPrice);
+    const priceRatio = priceDiff / avgPrice;
+    if (priceRatio <= 0.3) { // Within 30%
+      score += 1.2;
+      reasons.push(`Matches your budget range`);
+    } else if (priceRatio <= 0.5) { // Within 50%
+      score += 0.6;
+    }
+    
+    // Only recommend if score is meaningful
+    if (score > 0.3) {
+      // Determine confidence based on score
+      let confidence = 'Low';
+      if (score >= 3.5) confidence = 'High';
+      else if (score >= 2.0) confidence = 'Medium';
+      
+      // If no specific reasons, add generic one
+      if (reasons.length === 0) {
+        reasons.push('You might like this');
+      }
+      
+      recommendations.push({
+        ...product,
+        score: score,
+        aiReasons: reasons.slice(0, 2), // Max 2 reasons
+        confidence: confidence,
+        aiScore: score.toFixed(2)
+      });
+    }
+  });
+  
+  // If no good recommendations, show all available with basic reasons
+  if (recommendations.length === 0) {
+    availableProducts.forEach(product => {
+      recommendations.push({
+        ...product,
+        score: 0.5,
+        aiReasons: ['Explore new products', 'Popular in store'],
+        confidence: 'Low',
+        aiScore: '0.50'
+      });
+    });
+  }
+  
+  return recommendations;
+}
+
+// Get purchase frequency analytics (AI Insight)
+app.get('/ai/purchase-analytics', authenticateToken, async (req, res) => {
+  try {
+    const productCollection = db.collection(productCollectionName);
+    const allProducts = await productCollection.find({}).toArray();
+    
+    // Analyze purchase patterns
+    const categoryPurchaseFrequency = {};
+    const userPurchaseCount = {};
+    const priceRangeDistribution = { low: 0, medium: 0, high: 0 };
+    
+    allProducts.forEach(product => {
+      if (product.ProductOwner !== 'supermarket') {
+        // Category frequency
+        const cat = product.catNumber || 'uncategorized';
+        categoryPurchaseFrequency[cat] = (categoryPurchaseFrequency[cat] || 0) + 1;
+        
+        // User purchase count
+        userPurchaseCount[product.ProductOwner] = 
+          (userPurchaseCount[product.ProductOwner] || 0) + 1;
+        
+        // Price distribution
+        const price = parseFloat(product.ProductPrice) || 0;
+        if (price < 50) priceRangeDistribution.low++;
+        else if (price < 150) priceRangeDistribution.medium++;
+        else priceRangeDistribution.high++;
+      }
+    });
+    
+    // Find most popular category
+    let popularCategory = 'None';
+    let maxFreq = 0;
+    Object.keys(categoryPurchaseFrequency).forEach(cat => {
+      if (categoryPurchaseFrequency[cat] > maxFreq) {
+        maxFreq = categoryPurchaseFrequency[cat];
+        popularCategory = cat;
+      }
+    });
+    
+    // Calculate average purchase per user
+    const totalUsers = Object.keys(userPurchaseCount).length;
+    const totalPurchases = Object.values(userPurchaseCount).reduce((a, b) => a + b, 0);
+    const avgPurchasePerUser = totalUsers > 0 ? (totalPurchases / totalUsers).toFixed(2) : 0;
+    
+    res.json({
+      success: true,
+      analytics: {
+        mostPopularCategory: popularCategory,
+        categoryFrequency: categoryPurchaseFrequency,
+        priceDistribution: priceRangeDistribution,
+        averagePurchasesPerUser: avgPurchasePerUser,
+        totalActiveUsers: totalUsers,
+        totalPurchases: totalPurchases
+      },
+      aiInsights: [
+        `${popularCategory} is the most popular category`,
+        `Average user buys ${avgPurchasePerUser} products`,
+        `${priceRangeDistribution.low} low-price purchases detected`
+      ]
+    });
+  } catch (error) {
+    console.error('Error in purchase analytics:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ==================== USER ANALYTICS ENDPOINTS ====================
+
+// Get user profile statistics
+app.get('/user/stats', authenticateToken, async (req, res) => {
+  const username = req.user.username;
+  
+  try {
+    const productCollection = db.collection(productCollectionName);
+    const usersCollection = db.collection(userCollectionName);
+    
+    // Get user data
+    const user = await usersCollection.findOne({ username });
+    
+    // Get user's purchases
+    const userPurchases = await productCollection.find({ 
+      ProductOwner: username 
+    }).toArray();
+    
+    // Calculate statistics
+    const totalSpent = userPurchases.reduce((sum, p) => 
+      sum + (parseFloat(p.ProductPrice) || 0), 0
+    );
+    
+    const totalItems = userPurchases.length;
+    
+    const avgPurchaseValue = totalItems > 0 ? totalSpent / totalItems : 0;
+    
+    // Category breakdown
+    const categoryBreakdown = {};
+    userPurchases.forEach(p => {
+      const cat = p.catNumber || 'other';
+      if (!categoryBreakdown[cat]) {
+        categoryBreakdown[cat] = { count: 0, spent: 0 };
+      }
+      categoryBreakdown[cat].count++;
+      categoryBreakdown[cat].spent += parseFloat(p.ProductPrice) || 0;
+    });
+    
+    // Most expensive purchase
+    let mostExpensive = null;
+    let maxPrice = 0;
+    userPurchases.forEach(p => {
+      const price = parseFloat(p.ProductPrice) || 0;
+      if (price > maxPrice) {
+        maxPrice = price;
+        mostExpensive = p;
+      }
+    });
+    
+    // Favorite category
+    let favoriteCategory = 'None';
+    let maxCount = 0;
+    Object.keys(categoryBreakdown).forEach(cat => {
+      if (categoryBreakdown[cat].count > maxCount) {
+        maxCount = categoryBreakdown[cat].count;
+        favoriteCategory = cat;
+      }
+    });
+    
+    res.json({
+      success: true,
+      stats: {
+        username: user.username,
+        email: user.email,
+        currentBalance: user.balance || 0,
+        totalItemsPurchased: totalItems,
+        totalMoneySpent: totalSpent.toFixed(2),
+        averagePurchaseValue: avgPurchaseValue.toFixed(2),
+        categoryBreakdown: categoryBreakdown,
+        favoriteCategory: favoriteCategory.replace('_', ' '),
+        mostExpensivePurchase: mostExpensive ? {
+          name: mostExpensive.ProductName,
+          price: mostExpensive.ProductPrice
+        } : null,
+        memberSince: user.createdAt || new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user stats:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // ==================== COMPLAINT ENDPOINTS ====================
 
 // Submit a complaint
