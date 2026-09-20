@@ -181,7 +181,7 @@ curl -X POST "https://hackathon-submission-q1mg.onrender.com/returnProduct" -H "
 **Example Request**:
 
 ```bash
-curl -X GET "https://hackathon-submission-q1mg.onrender.com/purchases?username=swayam_raut"
+curl -X GET "https://hackathon-submission-q1mg.onrender.com/purchases?username=Karan Mishra"
 ```
 
 **Example Response**:
@@ -191,7 +191,7 @@ curl -X GET "https://hackathon-submission-q1mg.onrender.com/purchases?username=s
   {
     "_id": "66a545526c8946f8b8ddb038",
     "ProductName": "Example Product",
-    "ProductOwner": "swayam_raut",
+    "ProductOwner": "Karan Mishra",
     "ProductPrice": 12.99,
     "ImageLink": "http://example.com/image.jpg",
     "UID": "71a6d2cf"
